@@ -1,0 +1,14 @@
+{
+  "name": "threex.loop",
+  "homepage": "https://github.com/jeromeetienne/threex.loop",
+  "_release": "00267f82ab",
+  "_resolution": {
+    "type": "branch",
+    "branch": "master",
+    "commit": "00267f82ab51388babf0c42d4fa6db1fb62398af"
+  },
+  "_source": "git://github.com/jeromeetienne/threex.loop.git",
+  "_target": "*",
+  "_originalSource": "threex.loop",
+  "_direct": true
+}

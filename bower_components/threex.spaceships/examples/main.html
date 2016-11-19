@@ -1,0 +1,379 @@
+<!-- Particule: https://aerotwist.com/tutorials/creating-particles-with-three-js/ -->
+<!-- OrbitalControl: http://codepen.io/nireno/pen/cAoGI -->
+
+<!-- Rapport expliquer le fonctionnement des events de la souris: http://soledadpenades.com/articles/three-js-tutorials/object-picking/  -->
+
+<!DOCTYPE html>
+<html>
+<html>
+<head>
+	<title>Projet WebGL</title>
+	<script src="vendor/three.js/build/three.min.js"></script>
+	<script src='vendor/three.js/examples/js/loaders/OBJLoader.js'></script>
+	<script src='vendor/three.js/examples/js/loaders/MTLLoader.js'></script>
+	<script src='vendor/three.js/examples/js/loaders/OBJMTLLoader.js'></script>
+	<script src="domevent.js"></script>
+	<script src="https://dl.dropboxusercontent.com/u/3587259/Code/Threejs/OrbitControls.js"></script>
+	<script src='../threex.spaceships.js'></script>
+	  <style>
+        body {
+            /* set margin to 0 and overflow to hidden, to go fullscreen */
+            margin: 0;
+            overflow: hidden;
+            background-color: #000000;
+        }
+    </style> 
+</head>
+<body>
+<div id="container"></div>
+
+<!-- ---------------- Custom Shader Code ------------------------ -->
+<script id="vertexShader" type="x-shader/x-vertex">
+/*
+	Three.js "tutorials by example"
+	Author: Lee Stemkoski
+	Date: July 2013 (three.js v59dev)
+*/
+uniform sampler2D noiseTexture;
+uniform float noiseScale;
+
+uniform sampler2D bumpTexture;
+uniform float bumpSpeed;
+uniform float bumpScale;
+
+uniform float time;
+
+varying vec2 vUv;
+
+void main() 
+{ 
+    vUv = uv;
+	
+	vec2 uvTimeShift = vUv + vec2( 1.1, 1.9 ) * time * bumpSpeed;
+	vec4 noiseGeneratorTimeShift = texture2D( noiseTexture, uvTimeShift );
+	vec2 uvNoiseTimeShift = vUv + noiseScale * vec2( noiseGeneratorTimeShift.r, noiseGeneratorTimeShift.g );
+	// below, using uvTimeShift seems to result in more of a "rippling" effect
+	//   while uvNoiseTimeShift seems to result in more of a "shivering" effect
+	vec4 bumpData = texture2D( bumpTexture, uvTimeShift );
+
+	// move the position along the normal
+	//  but displace the vertices at the poles by the same amount
+	float displacement = ( vUv.y > 0.999 || vUv.y < 0.001 ) ? 
+		bumpScale * (0.3 + 0.02 * sin(time)) :  
+		bumpScale * bumpData.r;
+    vec3 newPosition = position + normal * displacement;
+	
+	gl_Position = projectionMatrix * modelViewMatrix * vec4( newPosition, 1.0 );
+}
+</script>
+
+<!-- fragment shader a.k.a. pixel shader -->
+<script id="fragmentShader" type="x-shader/x-vertex"> 
+uniform sampler2D baseTexture;
+uniform float baseSpeed;
+uniform float repeatS;
+uniform float repeatT;
+
+uniform sampler2D noiseTexture;
+uniform float noiseScale;
+
+uniform sampler2D blendTexture;
+uniform float blendSpeed;
+uniform float blendOffset;
+
+uniform float time;
+uniform float alpha;
+
+varying vec2 vUv;
+
+void main() 
+{
+	vec2 uvTimeShift = vUv + vec2( -0.7, 1.5 ) * time * baseSpeed;	
+	vec4 noiseGeneratorTimeShift = texture2D( noiseTexture, uvTimeShift );
+	vec2 uvNoiseTimeShift = vUv + noiseScale * vec2( noiseGeneratorTimeShift.r, noiseGeneratorTimeShift.b );
+	vec4 baseColor = texture2D( baseTexture, uvNoiseTimeShift * vec2(repeatS, repeatT) );
+
+	vec2 uvTimeShift2 = vUv + vec2( 1.3, -1.7 ) * time * blendSpeed;	
+	vec4 noiseGeneratorTimeShift2 = texture2D( noiseTexture, uvTimeShift2 );
+	vec2 uvNoiseTimeShift2 = vUv + noiseScale * vec2( noiseGeneratorTimeShift2.g, noiseGeneratorTimeShift2.b );
+	vec4 blendColor = texture2D( blendTexture, uvNoiseTimeShift2 * vec2(repeatS, repeatT) ) - blendOffset * vec4(1.0, 1.0, 1.0, 1.0);
+
+	vec4 theColor = baseColor + blendColor;
+	theColor.a = alpha;
+	gl_FragColor = theColor;
+}  
+</script>
+<!-- ----------------------------------------------------------- -->
+  <script type="text/javascript">
+  window.requestAnimFrame = (function(){
+      return  window.requestAnimationFrame       || 
+              window.webkitRequestAnimationFrame || 
+              window.mozRequestAnimationFrame    || 
+              window.oRequestAnimationFrame      || 
+              window.msRequestAnimationFrame     || 
+              function(/* function */ callback, /* DOMElement */ element){
+                window.setTimeout(callback, 1000 / 60);
+              };
+    })();
+
+  var renderer, scene, camera, mesh, controls;
+var clock = new THREE.Clock();
+    // on initialise le moteur de rendu
+    renderer = new THREE.WebGLRenderer();
+
+    // si WebGL ne fonctionne pas sur votre navigateur vous pouvez utiliser le moteur de rendu Canvas à la place
+    // renderer = new THREE.CanvasRenderer();
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    document.getElementById('container').appendChild(renderer.domElement);
+
+    // on initialise la scène
+    scene = new THREE.Scene();
+    //scene.fog = new THREE.FogExp2( 0x000000, 0.001 );
+
+    // on initialise la camera que l’on place ensuite sur la scène
+    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 10000 );
+    camera.position.set(0, 0, 1000);
+    scene.add(camera);
+
+    controls = new THREE.OrbitControls( camera );
+  	//controls.addEventListener( 'change', renderer.render( scene, camera ) );
+    
+
+/* -----------------------------------------  + ObjGroup ---------------------------------------------*/
+var objGroup = new THREE.Object3D();
+scene.add(objGroup);
+var geometry = new THREE.BoxGeometry( 100, 100, 100 );
+var material = new THREE.MeshBasicMaterial( {color: 0x00ff00} );
+var cube = new THREE.Mesh( geometry, material );
+objGroup.add( cube );
+
+var geometry1 = new THREE.BoxGeometry( 200, 150, 100 );
+var material1 = new THREE.MeshLambertMaterial( {color: 0x00fff0} );
+var cube1 = new THREE.Mesh( geometry1, material1 );
+cube1.position.x = 150;
+cube1.position.z = 350;
+objGroup.add( cube1 );
+
+var light = new THREE.PointLight( 0xD91E18, 100, 1500 );
+light.position.set( 0, 0, 0 );
+scene.add( light );
+
+var lightA = new THREE.AmbientLight( 0x404040 ); // soft white light
+scene.add( lightA );
+
+
+camera.lookAt(cube);
+
+/* -----------------------------------------  - ObjGroup ---------------------------------------------*/
+/* -----------------------------------------  + SpaceCraft ---------------------------------------------*/
+
+	THREEx.SpaceShips.loadSpaceFighter01(function(object3d){
+		console.log("yoohooooooooooo");
+		object3d.position.x	= -1
+		object3d.position.y	=  0.5
+		scene.add(object3d)
+	})
+/* -----------------------------------------  - SpaceCraft ---------------------------------------------*/
+
+/* -----------------------------------------  + Particles ---------------------------------------------*/
+	// create the particle variables
+	var particleCount = 10000,
+	    particles = new THREE.Geometry(),
+	    pMaterial = new THREE.ParticleBasicMaterial({
+	    	transparent: true,
+	    	opacity: 0.8,
+	      color: 0xF64747,
+	      size: 20
+	    });
+	   var newParticleCount =0;
+	// now create the individual particles
+	for (var p = 0; p < particleCount; p++) {
+
+	  // create a particle with random
+	  // position values, -250 -> 250
+	  var pX = Math.pow(-1, Math.floor(Math.random() + 0.5)) * Math.random() * 2000,
+	      pY = Math.pow(-1, Math.floor(Math.random() + 0.5)) * Math.random() * 2000,
+	      pZ = Math.pow(-1, Math.floor(Math.random() + 0.5)) * Math.random() * 2000,
+	      particle = new THREE.Vector3(pX, pY, pZ);
+	      particle.velocity = new THREE.Vector3(
+								  Math.random(),              // x
+								  Math.random(), // y: random vel
+								  Math.random());             // z
+
+	  // add it to the geometry
+	  var color = new THREE.Color(0x00ff00);
+                color.setHSL(color.getHSL().h, color.getHSL().s, Math.random() * color.getHSL().l);
+      particles.colors.push(color);
+      if(!(pX<250 && pX>-250 && pY<250 && pY>-250 && pZ<250 && pZ>-250)){
+	  	particles.vertices.push(particle);
+	  	newParticleCount++;
+	  }
+	}
+	// create the particle system
+	var particleSystem = new THREE.ParticleSystem(particles, pMaterial);
+
+
+	// add it to the scene
+	scene.add(particleSystem);
+
+	var axisHelper1 = new THREE.AxisHelper( 200 );
+particleSystem.add( axisHelper1 );
+/* -----------------------------------------  - Particles ---------------------------------------------*/
+
+/* -----------------------------------------  + Mouse ---------------------------------------------*/
+var raycaster = new THREE.Raycaster();
+var mouseVector = new THREE.Vector2();
+
+window.addEventListener( 'mousemove', onMouseMove, false );
+
+function onMouseMove( event ) {
+	
+    event.preventDefault();
+
+	/*mouseVector.x = 2 * (event.clientX / window.innerWidth) - 1;
+	mouseVector.y = 1 - 2 * ( event.clientY / window.innerHeight );
+
+    raycaster.setFromCamera( mouseVector, camera );
+
+    var intersects = raycaster.intersectObjects( objGroup.children ); 
+
+    objGroup.children.forEach(function( o ) {
+    	o.material.color.setRGB( 0, 1, 0 );
+	});
+    if ( intersects.length > 0 ) {
+
+        intersects[0].object.material.color.setRGB( 1, 0, 0 );
+
+    }
+*/
+}
+/* ----------------------------------------- - Mouse ---------------------------------------------*/
+
+////////////
+	// CUSTOM //
+	////////////
+	
+	// base image texture for mesh
+	var lavaTexture = new THREE.ImageUtils.loadTexture( '../../../imgs/lava.jpg');
+	lavaTexture.wrapS = lavaTexture.wrapT = THREE.RepeatWrapping; 
+	// multiplier for distortion speed 		
+	var baseSpeed = 0.02;
+	// number of times to repeat texture in each direction
+	var repeatS = repeatT = 4.0;
+	
+	// texture used to generate "randomness", distort all other textures
+	var noiseTexture = new THREE.ImageUtils.loadTexture( '../../../imgs/cloud.png' );
+	noiseTexture.wrapS = noiseTexture.wrapT = THREE.RepeatWrapping; 
+	// magnitude of noise effect
+	var noiseScale = 0.5;
+	
+	// texture to additively blend with base image texture
+	var blendTexture = new THREE.ImageUtils.loadTexture( '../../../imgs/lava.jpg' );
+	blendTexture.wrapS = blendTexture.wrapT = THREE.RepeatWrapping; 
+	// multiplier for distortion speed 
+	var blendSpeed = 0.01;
+	// adjust lightness/darkness of blended texture
+	var blendOffset = 0.25;
+
+	// texture to determine normal displacement
+	var bumpTexture = noiseTexture;
+	bumpTexture.wrapS = bumpTexture.wrapT = THREE.RepeatWrapping; 
+	// multiplier for distortion speed 		
+	var bumpSpeed   = 0.15;
+	// magnitude of normal displacement
+	var bumpScale   = 40.0;
+	
+	// use "this." to create global object
+	this.customUniforms = {
+		baseTexture: 	{ type: "t", value: lavaTexture },
+		baseSpeed:		{ type: "f", value: baseSpeed },
+		repeatS:		{ type: "f", value: repeatS },
+		repeatT:		{ type: "f", value: repeatT },
+		noiseTexture:	{ type: "t", value: noiseTexture },
+		noiseScale:		{ type: "f", value: noiseScale },
+		blendTexture:	{ type: "t", value: blendTexture },
+		blendSpeed: 	{ type: "f", value: blendSpeed },
+		blendOffset: 	{ type: "f", value: blendOffset },
+		bumpTexture:	{ type: "t", value: bumpTexture },
+		bumpSpeed: 		{ type: "f", value: bumpSpeed },
+		bumpScale: 		{ type: "f", value: bumpScale },
+		alpha: 			{ type: "f", value: 1.0 },
+		time: 			{ type: "f", value: 1.0 }
+	};
+	
+	// create custom material from the shader code above
+	//   that is within specially labeled script tags
+	var customMaterial = new THREE.ShaderMaterial( 
+	{
+	    uniforms: customUniforms,
+		vertexShader:   document.getElementById( 'vertexShader'   ).textContent,
+		fragmentShader: document.getElementById( 'fragmentShader' ).textContent
+	}   );
+		
+	var ballGeometry = new THREE.SphereGeometry( 60, 64, 64 );
+	var ball = new THREE.Mesh(	ballGeometry, customMaterial );
+	ball.position.set(0, 65, 160);
+	scene.add( ball );
+
+	var ballGeometry1 = new THREE.SphereGeometry( 90, 94, 94 );
+	var ball1 = new THREE.Mesh(	ballGeometry1, customMaterial );
+	ball1.position.set(320, 165, 160);
+	scene.add( ball1 );
+
+	var ballGeometry2 = new THREE.SphereGeometry( 260, 264, 642 );
+	var ball2 = new THREE.Mesh(	ballGeometry2, customMaterial );
+	ball2.position.set(450, 0, 160);
+	scene.add( ball2 );
+
+	var ballGeometry3 = new THREE.SphereGeometry( 30, 34, 34 );
+	var ball3 = new THREE.Mesh(	ballGeometry3, customMaterial );
+	ball3.position.set(100, 550, 100);
+	scene.add( ball3 );
+
+/* -----------------------------------------  + Animate ---------------------------------------------*/
+	// animation loop
+	function update() {
+
+	  // add some rotation to the system
+	  particleSystem.rotation.y += 0.001;
+	  particleSystem.rotation.x += 0.001;
+
+	  var pCount = newParticleCount;
+	  while (pCount--) {
+
+	    // get the particle
+	    var particle =
+	      particles.vertices[pCount];
+
+	    // update the velocity with
+	    // a splat of randomniz
+	    particle.velocity.y -= Math.random() * .1;
+	    particle.velocity.x -= Math.random() * .1;
+
+	    // and the position
+	    //particle.addSelf(particle.velocity);
+	  }
+
+	  // flag to the particle system
+	  // that we've changed its vertices.
+	  particleSystem.
+	    geometry.
+	    __dirtyVertices = true;
+
+	    controls.update(); //update controle
+
+	    var delta = clock.getDelta();
+	    customUniforms.time.value += delta;
+
+	  // draw
+	  renderer.render(scene, camera);
+
+	  // set up the next call
+	  requestAnimFrame(update);
+
+	}
+	requestAnimFrame(update);
+
+  </script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "threex.spaceships",
+  "homepage": "https://github.com/jeromeetienne/threex.spaceships",
+  "_release": "c113d71c6a",
+  "_resolution": {
+    "type": "branch",
+    "branch": "master",
+    "commit": "c113d71c6af4e5079ca79babd94bbb702e1dc7c4"
+  },
+  "_source": "git://github.com/jeromeetienne/threex.spaceships.git",
+  "_target": "*",
+  "_originalSource": "threex.spaceships",
+  "_direct": true
+}

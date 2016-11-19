@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Projet WebGL</title>
+	<script src="vendor/three.js/build/three.min.js"></script>
+	<script src='vendor/three.js/examples/js/loaders/OBJLoader.js'></script>
+	<script src='vendor/three.js/examples/js/loaders/MTLLoader.js'></script>
+	<script src='vendor/three.js/examples/js/loaders/OBJMTLLoader.js'></script>
+	<script src="vendor/three.js/examples/js/utils/GeometryUtils.js"></script>
+
+	<script src="vendor/OrbitControls.js"></script>
+	<script src='bower_components/threex.spaceships/threex.spaceships.js'></script>
+	<script src='bower_components/threex.keyboardstate/threex.keyboardstate.js'></script>
+	<script src='bower_components/threex.loop/threex.loop.js'></script>
+	<script src='bower_components/threex.colliders/threex.collider.js'></script>
+	<script src='bower_components/threex.colliders/threex.collidersystem.js'></script>
+	<script src='bower_components/threex.colliders/threex.colliderhelper.js'></script>
+
+	<script src='bower_components/ShaderParticleEngine/build/ShaderParticles.min.js'></script>
+
+	<!-- Custom Shader Code -->
+	<script id="vertexShader" type="x-shader/x-vertex">
+	/*
+		Three.js "tutorials by example"
+		Author: Lee Stemkoski
+		Date: July 2013 (three.js v59dev)
+	*/
+	uniform sampler2D noiseTexture;
+	uniform float noiseScale;
+
+	uniform sampler2D bumpTexture;
+	uniform float bumpSpeed;
+	uniform float bumpScale;
+
+	uniform float time;
+
+	varying vec2 vUv;
+
+	void main() 
+	{ 
+	    vUv = uv;
+		
+		vec2 uvTimeShift = vUv + vec2( 1.1, 1.9 ) * time * bumpSpeed;
+		vec4 noiseGeneratorTimeShift = texture2D( noiseTexture, uvTimeShift );
+		vec2 uvNoiseTimeShift = vUv + noiseScale * vec2( noiseGeneratorTimeShift.r, noiseGeneratorTimeShift.g );
+		// below, using uvTimeShift seems to result in more of a "rippling" effect
+		//   while uvNoiseTimeShift seems to result in more of a "shivering" effect
+		vec4 bumpData = texture2D( bumpTexture, uvTimeShift );
+
+		// move the position along the normal
+		//  but displace the vertices at the poles by the same amount
+		float displacement = ( vUv.y > 0.999 || vUv.y < 0.001 ) ? 
+			bumpScale * (0.3 + 0.02 * sin(time)) :  
+			bumpScale * bumpData.r;
+	    vec3 newPosition = position + normal * displacement;
+		
+		gl_Position = projectionMatrix * modelViewMatrix * vec4( newPosition, 1.0 );
+	}
+	</script>
+
+	<!-- fragment shader -->
+	<script id="fragmentShader" type="x-shader/x-vertex">
+	uniform sampler2D baseTexture;
+	uniform float baseSpeed;
+	uniform float repeatS;
+	uniform float repeatT;
+
+	uniform sampler2D noiseTexture;
+	uniform float noiseScale;
+
+	uniform sampler2D blendTexture;
+	uniform float blendSpeed;
+	uniform float blendOffset;
+
+	uniform float time;
+	uniform float alpha;
+
+	varying vec2 vUv;
+
+	void main() 
+	{
+		vec2 uvTimeShift = vUv + vec2( -0.7, 1.5 ) * time * baseSpeed;	
+		vec4 noiseGeneratorTimeShift = texture2D( noiseTexture, uvTimeShift );
+		vec2 uvNoiseTimeShift = vUv + noiseScale * vec2( noiseGeneratorTimeShift.r, noiseGeneratorTimeShift.b );
+		vec4 baseColor = texture2D( baseTexture, uvNoiseTimeShift * vec2(repeatS, repeatT) );
+
+		vec2 uvTimeShift2 = vUv + vec2( 1.3, -1.7 ) * time * blendSpeed;	
+		vec4 noiseGeneratorTimeShift2 = texture2D( noiseTexture, uvTimeShift2 );
+		vec2 uvNoiseTimeShift2 = vUv + noiseScale * vec2( noiseGeneratorTimeShift2.g, noiseGeneratorTimeShift2.b );
+		vec4 blendColor = texture2D( blendTexture, uvNoiseTimeShift2 * vec2(repeatS, repeatT) ) - blendOffset * vec4(1.0, 1.0, 1.0, 1.0);
+
+		vec4 theColor = baseColor + blendColor;
+		theColor.a = alpha;
+		gl_FragColor = theColor;
+	}
+	</script>
+
+	  <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000000;
+        }
+    </style> 
+</head>
+<body>
+<div id="start" style="position: absolute; top: 30%;width: 100%; text-align: center; font-size: 66px; color: #fff;">
+	Pour commencer, veuillez appuyer sur le bouton <strong>"o"</strong>
+</div>
+<div id="container"></div>
+<script type="text/javascript">
+
+  window.requestAnimFrame = (function(){
+      return  window.requestAnimationFrame       || 
+              window.webkitRequestAnimationFrame || 
+              window.mozRequestAnimationFrame    || 
+              window.oRequestAnimationFrame      || 
+              window.msRequestAnimationFrame     || 
+              function(/* function */ callback, /* DOMElement */ element){
+                window.setTimeout(callback, 1000 / 60);
+              };
+    })();
+
+	var renderer, scene, camera, mesh, controls, loader, hero, shooter, obstacles, spaceShipCollider, shooterCollider, obstacleColliders = [];
+
+	var clock = new THREE.Clock();
+
+	var gameStarted = false;
+
+	var keyboard = new THREEx.KeyboardState();
+
+	var loopRender = new THREEx.RenderingLoop();
+	loopRender.start();
+
+	var colliderSystem  = new THREEx.ColliderSystem();
+
+    // on initialise le moteur de rendu
+    renderer = new THREE.WebGLRenderer({
+			        antialias: true
+			    });
+
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    document.getElementById('container').appendChild(renderer.domElement);
+
+    // on initialise la scène
+    scene = new THREE.Scene();
+    //scene.fog = new THREE.FogExp2( 0x000000, 0.001 );
+
+    // on initialise la camera
+    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 10000 );
+
+    controls = new THREE.OrbitControls( camera );
+
+/* -----------------------------------------  + Explosion ---------------------------------------------*/
+			var group = new SPE.Group( {
+					texture: {
+						value: THREE.ImageUtils.loadTexture( 'imgs/sprite-explosion2.png' ),
+						frames: new THREE.Vector2( 5, 5 ),
+						loop: 1
+					},
+					depthTest: true,
+					depthWrite: false,
+					blending: THREE.AdditiveBlending,
+					scale: 600
+				} ),
+				shockwaveGroup = new SPE.Group( {
+					texture: {
+						value: THREE.ImageUtils.loadTexture( 'imgs/smokeparticle.png' ),
+					},
+					depthTest: false,
+					depthWrite: true,
+					blending: THREE.NormalBlending,
+				} ),
+				shockwave = new SPE.Emitter( {
+					particleCount: 200,
+					type: SPE.distributions.DISC,
+					position: {
+						radius: 5,
+						spread: new THREE.Vector3( 5 )
+					},
+					maxAge: {
+						value: 2,
+						spread: 0
+					},
+					// duration: 1,
+					activeMultiplier: 2000,
+
+					velocity: {
+						value: new THREE.Vector3( 40 )
+					},
+					rotation: {
+						axis: new THREE.Vector3( 1, 0, 0 ),
+						angle: Math.PI * 0.5,
+						static: true
+					},
+					size: { value: 2 },
+					color: {
+						value: [
+							new THREE.Color( 0.4, 0.2, 0.1 ),
+							new THREE.Color( 0.2, 0.2, 0.2 )
+						]
+					},
+					opacity: { value: [0.5, 0.2, 0] }
+				}),
+				debris = new SPE.Emitter( {
+					particleCount: 100,
+					type: SPE.distributions.SPHERE,
+					position: {
+						radius: 0.1,
+					},
+					maxAge: {
+						value: 2
+					},
+					// duration: 2,
+					activeMultiplier: 40,
+
+					velocity: {
+						value: new THREE.Vector3( 100 )
+					},
+					acceleration: {
+						value: new THREE.Vector3( 0, -20, 0 ),
+						distribution: SPE.distributions.BOX
+					},
+					size: { value: 2 },
+					drag: {
+						value: 1
+					},
+					color: {
+						value: [
+							new THREE.Color( 1, 1, 1 ),
+							new THREE.Color( 1, 1, 0 ),
+							new THREE.Color( 1, 0, 0 ),
+							new THREE.Color( 0.4, 0.2, 0.1 )
+						]
+					},
+					opacity: { value: [0.4, 0] }
+				}),
+				fireball = new SPE.Emitter( {
+					particleCount: 20,
+					type: SPE.distributions.SPHERE,
+					position: {
+						radius: 1
+					},
+					maxAge: { value: 2 },
+					// duration: 1,
+					activeMultiplier: 20,
+					velocity: {
+						value: new THREE.Vector3( 10 )
+					},
+					size: { value: [20, 100] },
+					color: {
+						value: [
+							new THREE.Color( 0.5, 0.1, 0.05 ),
+							new THREE.Color( 0.2, 0.2, 0.2 )
+						]
+					},
+					opacity: { value: [0.5, 0.35, 0.1, 0] }
+				}),
+				mist = new SPE.Emitter( {
+					particleCount: 50,
+					position: {
+						spread: new THREE.Vector3( 10, 10, 10 ),
+						distribution: SPE.distributions.SPHERE
+					},
+					maxAge: { value: 2 },
+					// duration: 1,
+					activeMultiplier: 2000,
+					velocity: {
+						value: new THREE.Vector3( 8, 3, 10 ),
+						distribution: SPE.distributions.SPHERE
+					},
+					size: { value: 40 },
+					color: {
+						value: new THREE.Color( 0.2, 0.2, 0.2 )
+					},
+					opacity: { value: [0, 0, 0.2, 0] }
+				}),
+				flash = new SPE.Emitter( {
+					particleCount: 50,
+					position: { spread: new THREE.Vector3( 5, 5, 5 ) },
+					velocity: {
+						spread: new THREE.Vector3( 30 ),
+						distribution: SPE.distributions.SPHERE
+					},
+					size: { value: [2, 20, 20, 20] },
+					maxAge: { value: 2 },
+					activeMultiplier: 2000,
+					opacity: { value: [0.5, 0.25, 0, 0] }
+				} );
+
+			group.addEmitter( fireball ).addEmitter( flash );
+			shockwaveGroup.addEmitter( debris ).addEmitter( mist );
+
+			var light = new THREE.PointLight( 0xffffff, 1, 100 );
+			light.position.set( 0, 20, 0 );
+			scene.add( light );
+			scene.add( shockwaveGroup.mesh );
+			scene.add( group.mesh );
+
+			function explosionPosition(p){
+				shockwaveGroup.mesh.position.x = p.x;
+				shockwaveGroup.mesh.position.y = p.y;
+				shockwaveGroup.mesh.position.z = p.z;
+
+				group.mesh.position.x = p.x;
+				group.mesh.position.y = p.y;
+				group.mesh.position.z = p.z;
+			}
+
+			function renderExplosion() {
+				var dt = clock.getDelta();
+			    group.tick();
+			    shockwaveGroup.tick();
+			}
+/* -----------------------------------------  - Explosion ---------------------------------------------*/
+
+/* -----------------------------------------  + ObjGroup / Hero ---------------------------------------------*/
+var objGroup = new THREE.Object3D();
+scene.add(objGroup);
+
+objGroup.add(camera);	//La camera doit suivre l'hero
+camera.position.set(0,14,-37);
+
+hero = new THREE.Object3D();
+objGroup.add(hero);
+
+shooter = new THREE.Object3D();
+
+var shootR = new THREEx.SpaceShips.Shoot();
+shootR.position.x= 0.5;
+shootR.position.z= 0.3;
+shooter.add(shootR);
+
+// the left shoot
+var shootL = new THREEx.SpaceShips.Shoot();
+shootL.position.x=-0.5;
+shootL.position.z= 0.3;
+shooter.add(shootL);
+
+var detonationR  = new THREEx.SpaceShips.Detonation();
+detonationR.position.x= 0.5;
+detonationR.position.z= 0.3;
+shooter.add(detonationR);
+
+var detonationL  = new THREEx.SpaceShips.Detonation();
+detonationL.position.x= -0.5;
+detonationL.position.z= 0.3;
+shooter.add(detonationL);
+
+shooter.scale.set(6,6,6);
+
+shooterCollider = THREEx.Collider.createFromObject3d(shooter);
+shooterCollider.name= "shooterCollider";
+
+/* -----------------------------------------  - ObjGroup / Hero ---------------------------------------------*/
+
+/* -----------------------------------------  + Lighting ---------------------------------------------*/
+var lightEngine = new THREE.PointLight( 0xD91E18, 0, 5 );
+lightEngine.position.set( 0, 0, -6.5 );
+hero.add( lightEngine );
+
+var lightA = new THREE.AmbientLight(0xffffff); // soft white light
+scene.add(lightA);
+/* -----------------------------------------  - Lighting ---------------------------------------------*/
+
+/* -----------------------------------------  + SpaceCraft ---------------------------------------------*/
+	THREEx.SpaceShips.loadSpaceFighter01(function(object3d){
+		var texture = new THREE.ImageUtils.loadTexture( './bower_components/threex.spaceships/models/SpaceFighter01/F01_512.jpg');
+		console.log(object3d);
+		object3d.map = texture;
+		
+
+		spaceShipCollider = THREEx.Collider.createFromObject3d(object3d);
+		spaceShipCollider.name= "spaceShipCollider";
+		hero.add(object3d);
+
+		camera.lookAt(hero);
+
+	});
+/* -----------------------------------------  - SpaceCraft ---------------------------------------------*/
+
+/* -----------------------------------------  + Particles ---------------------------------------------*/
+	// create the particle variables
+	var particleCount = 10000,
+	    particles = new THREE.Geometry(),
+	    pMaterial = new THREE.ParticleBasicMaterial({
+	    	transparent: true,
+	    	opacity: 0.8,
+	      	color: 0xffffff,
+	      	size: 20,
+	      	map: THREE.ImageUtils.loadTexture("imgs/particle-star.png"),
+  			blending: THREE.AdditiveBlending,
+	    });
+	   var newParticleCount =0;
+	// now create the individual particles
+	for (var p = 0; p < particleCount; p++) {
+
+	  // create a particle with random
+	  var pX = Math.pow(-1, Math.floor(Math.random() + 0.5)) * Math.random() * 2000,
+	      pY = Math.pow(-1, Math.floor(Math.random() + 0.5)) * Math.random() * 2000,
+	      pZ = Math.pow(-1, Math.floor(Math.random() + 0.5)) * Math.random() * 2000,
+	      particle = new THREE.Vector3(pX, pY, pZ);
+	      particle.velocity = new THREE.Vector3(
+								  Math.random(),
+								  Math.random(),
+								  Math.random()
+								);
+
+      if(!(pX<250 && pX>-250 && pY<250 && pY>-250 && pZ<250 && pZ>-250)){	// Les particules doivent etre un peu eloigner du vesseau
+	  	particles.vertices.push(particle);
+	  	newParticleCount++;
+	  }
+	}
+	// create the particle system
+	var particleSystem = new THREE.ParticleSystem(particles, pMaterial);
+
+
+	// add it to the scene
+	scene.add(particleSystem);
+/* -----------------------------------------  - Particles ---------------------------------------------*/
+
+/* -----------------------------------------  - Keyboard ---------------------------------------------*/
+var canShoot = true;	// Ordenanceur des tires
+
+function keyboardUpdater(){
+	var speedMove = 0.5;
+	var speedRotation = Math.PI/16;
+
+	if( keyboard.pressed("O")){
+		gameStarted = true;
+		lightEngine.intensity = 10;
+		document.getElementById('start').style.display = 'none';  
+	}
+	if( keyboard.pressed("P")){
+		gameStarted = false;
+		lightEngine.intensity = 0;
+	}
+
+	if( keyboard.pressed("C") ){
+		console.log("copyright");
+	}
+
+	if( keyboard.pressed("Q") && hero.position.x<26){
+		hero.position.x += speedMove;
+	}
+	if( keyboard.pressed("D") && hero.position.x>-26){
+		hero.position.x -= speedMove;
+	}
+	if( keyboard.pressed("Z") && hero.position.y<14){
+		hero.position.y += speedMove;
+	}
+	if( keyboard.pressed("S") && hero.position.y>-14){
+		hero.position.y -= speedMove;
+	}
+
+	if( keyboard.pressed("A")){
+		if(hero.position.x<26)
+			hero.position.x += speedMove;
+		//Visual effect
+		hero.rotation.z += speedRotation;
+	}
+	if( keyboard.pressed("E")){
+		if(hero.position.x>-26)
+			hero.position.x -= speedMove;
+		//Visual effect
+		hero.rotation.z -= speedRotation;
+	}
+
+	if( keyboard.pressed(" ") && canShoot /*&& gameStarted*/){
+		canShoot = false;
+
+	    hero.add(shooter);
+
+	    (function shoot(){
+	    	shooter.position.z += 3.0;
+	    	shooterCollider.update();
+	    	if(shooter.position.z < 60)
+	    		requestAnimFrame(shoot);
+	    	else{
+	    		shooter.position.z = 0;
+
+	    		hero.remove(shooter);
+
+    		    canShoot = true;
+	    	}
+	    		
+	    })();
+	}
+}
+loopRender.add(keyboardUpdater);
+/* -----------------------------------------  - Keyboard ---------------------------------------------*/
+
+/* ----------------------------------------- + Obstacles ---------------------------------------------*/
+	obstacles = new THREE.Object3D();
+
+	scene.add(obstacles);
+
+	destructibles = new THREE.Object3D();
+	obstacles.add(destructibles);
+
+	// base image texture for mesh
+	var lavaTexture = new THREE.ImageUtils.loadTexture( 'imgs/lava.jpg');
+	lavaTexture.wrapS = lavaTexture.wrapT = THREE.RepeatWrapping; 
+	// multiplier for distortion speed
+	var baseSpeed = 0.02;
+	// number of times to repeat texture in each direction
+	var repeatS = repeatT = 4.0;
+	
+	// texture used to generate "randomness", distort all other textures
+	var noiseTexture = new THREE.ImageUtils.loadTexture( 'imgs/cloud.png' );
+	noiseTexture.wrapS = noiseTexture.wrapT = THREE.RepeatWrapping; 
+	// magnitude of noise effect
+	var noiseScale = 0.5;
+	
+	// texture to additively blend with base image texture
+	var blendTexture = new THREE.ImageUtils.loadTexture( 'imgs/lava.jpg' );
+	blendTexture.wrapS = blendTexture.wrapT = THREE.RepeatWrapping; 
+	// multiplier for distortion speed 
+	var blendSpeed = 0.01;
+	// adjust lightness/darkness of blended texture
+	var blendOffset = 0.25;
+
+	// texture to determine normal displacement
+	var bumpTexture = noiseTexture;
+	bumpTexture.wrapS = bumpTexture.wrapT = THREE.RepeatWrapping; 
+	// multiplier for distortion speed 		
+	var bumpSpeed   = 0.15;
+	// magnitude of normal displacement
+	var bumpScale   = 40.0;
+	
+	// use "this." to create global object
+	this.customUniforms = {
+		baseTexture: 	{ type: "t", value: lavaTexture },
+		baseSpeed:		{ type: "f", value: baseSpeed },
+		repeatS:		{ type: "f", value: repeatS },
+		repeatT:		{ type: "f", value: repeatT },
+		noiseTexture:	{ type: "t", value: noiseTexture },
+		noiseScale:		{ type: "f", value: noiseScale },
+		blendTexture:	{ type: "t", value: blendTexture },
+		blendSpeed: 	{ type: "f", value: blendSpeed },
+		blendOffset: 	{ type: "f", value: blendOffset },
+		bumpTexture:	{ type: "t", value: bumpTexture },
+		bumpSpeed: 		{ type: "f", value: bumpSpeed },
+		bumpScale: 		{ type: "f", value: bumpScale },
+		alpha: 			{ type: "f", value: 1.0 },
+		time: 			{ type: "f", value: 1.0 }
+	};
+	
+	// create custom material from the shader code above
+	// that is within specially labeled script tags
+	var customMaterial = new THREE.ShaderMaterial({
+	    uniforms: customUniforms,
+		vertexShader:   document.getElementById( 'vertexShader'   ).textContent,
+		fragmentShader: document.getElementById( 'fragmentShader' ).textContent
+	});
+
+	/* ------------- + Textures ------------*/
+	var texture = THREE.ImageUtils.loadTexture( "imgs/Metal1.jpg" );
+	var texture1 = THREE.ImageUtils.loadTexture( "imgs/Metal4.jpg" );
+	var texture2 = THREE.ImageUtils.loadTexture( "imgs/Metal6.png" );
+	/* ------------- + Textures ------------*/
+	var material = new THREE.MeshLambertMaterial( {map: texture} );
+	var material1 = new THREE.MeshLambertMaterial( {map: texture1} );
+	var material2 = new THREE.MeshLambertMaterial( {map: texture2} );
+	
+
+	var box = new THREE.BoxGeometry( 120, 2, 40 );
+	var cube1 = new THREE.Mesh(box, material2.clone());
+	cube1.hp = 25;
+	cube1.position.z = 50;
+	cube1.position.y = 10;
+	destructibles.add(cube1);
+
+	var cube2 = cube1.clone();
+	cube2.hp = 25;
+	cube2.position.y = -35;
+	destructibles.add( cube2 );
+
+	var ballGeometry1 = new THREE.SphereGeometry( 60, 64, 64 );
+	var ball1 = new THREE.Mesh(	ballGeometry1, customMaterial);
+	ball1.position.set(-28, -70, 200);
+	ball1.scale.set(0.1,0.1,0.1);
+	cube2.hp = 1;
+	destructibles.add( ball1 );
+	var lightBall = new THREE.PointLight( 0xD35400, 9, 180 );
+	lightBall.position.set(ball1.position.x, ball1.position.y, ball1.position.z);
+	ball1.add( lightBall );
+
+	var cube3 = new THREE.Mesh(new THREE.BoxGeometry( 110, 110, 2 ), material1.clone());
+	cube3.hp = 3;
+	cube3.position.z = 350;
+	destructibles.add( cube3 );
+
+	var geometry = new THREE.TorusGeometry( 50, 0.5, 16, 100 );
+	var torus = new THREE.Mesh( geometry, customMaterial);
+	torus.position.z = 400;
+	obstacles.add(torus);
+	var lightTorus = new THREE.PointLight( 0xD35400, 15, 100 );
+	//lightTorus.position.set(torus.position.x, torus.position.y, torus.position.z);
+	torus.add( lightTorus );
+	var lightTorus2 = lightTorus.clone();
+	lightTorus2.position.z -= 10;
+	torus.add( lightTorus2);
+	var lightTorus3 = lightTorus.clone();
+	lightTorus3.position.z += 10;
+	torus.add( lightTorus3);
+	var lightTorus4 = lightTorus.clone();
+	lightTorus4.position.y -= 10;
+	torus.add( lightTorus4);
+	var lightTorus5 = lightTorus.clone();
+	lightTorus5.position.y += 10;
+	torus.add( lightTorus5);
+
+	var geometryR = new THREE.CubeGeometry( 20, 20, 1 );
+	var cube4 = new THREE.Mesh( geometryR, material2.clone());
+	cube4.hp = 5;
+	cube4.position.z = 500;
+	destructibles.add( cube4 );
+
+	var pos = 0;
+	function moveObstacle(){
+		pos += Math.PI/50;
+		cube4.position.x = Math.cos(pos)*30;
+		cube4.rotation.z += 1;
+
+		ball1.position.x = Math.cos(pos)*20;
+		ball1.position.x += Math.cos(pos/1.5)*60;
+		ball1.position.y = Math.sin(pos)*20;
+	}
+	loopRender.add(moveObstacle);
+
+	destructibles.children.forEach(function( o ) {
+		var obstacleCollider = THREEx.Collider.createFromObject3d(o);
+		var onCollideEnter  = obstacleCollider.addEventListener('contactEnter', function(otherCollider){
+		    if(otherCollider.name == "shooterCollider"){
+		    	o.hp--;
+
+		    	console.log("we've got shot", o.hp);
+		    	if(o.hp == 0){
+		    		console.log("I'm destroyed");
+		    		o.position.z = -100;
+		    		destructibles.remove(o);
+		    	}
+		    }else if(otherCollider.name == "spaceShipCollider"){
+				gameStarted = false;
+
+				loopRender.remove(renderExplosion);
+				loopRender.add(renderExplosion);
+				explosionPosition(hero.position);
+
+				objGroup.remove(hero);
+
+				camera.zoom = 0.6;
+				camera.updateProjectionMatrix();
+
+				loopRender.remove(keyboardUpdater);
+				loopRender.remove(moveObstacle);
+
+		    }
+		});
+		obstacleColliders.push(obstacleCollider);
+	});
+/* ----------------------------------------- - Obstacles ---------------------------------------------*/
+
+/* -----------------------------------------  + Animate ---------------------------------------------*/
+	// animation loop
+	function update() {
+		if(gameStarted){
+			/*Heros always go forward :p */
+			obstacles.position.z -= 0.4;
+			/* ------------------------- */
+		}
+
+	  // add some rotation to the system
+	  particleSystem.rotation.y += 0.001;
+	  particleSystem.rotation.x += 0.001;
+
+	  var pCount = newParticleCount;
+	  while (pCount--) {
+
+	    // get the particle
+	    var particle = particles.vertices[pCount];
+
+	    // update the velocity with
+	    // a splat of randomniz
+	    particle.velocity.y -= Math.random() * .1;
+	    particle.velocity.x -= Math.random() * .1;
+
+	    // and the position
+	    //particle.addSelf(particle.velocity);
+	  }
+
+	  // flag to the particle system
+	  // that we've changed its vertices.
+	  particleSystem.geometry.__dirtyVertices = true;
+
+	    controls.update(); //update controle
+
+	    var delta = clock.getDelta();
+	    customUniforms.time.value += delta;
+
+
+	  //Colliders
+	  	if(spaceShipCollider){
+
+			spaceShipCollider.update();
+
+			obstacleColliders.forEach(function( o ){
+				o.update();
+			});
+
+		  	var colliders = [spaceShipCollider, shooterCollider];
+		  	colliders = colliders.concat(obstacleColliders);
+		    colliderSystem.computeAndNotify(colliders);
+	    }
+
+	  // draw
+	  renderer.render(scene, camera);
+
+	  // set up the next call
+	  requestAnimFrame(update);
+
+	}
+	requestAnimFrame(update);
+
+  </script>
+</body>
+</html>

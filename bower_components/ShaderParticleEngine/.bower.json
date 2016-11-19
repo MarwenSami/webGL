@@ -1,0 +1,26 @@
+{
+  "name": "ShaderParticleEngine",
+  "version": "0.8.5",
+  "homepage": "http://squarefeet.github.io/ShaderParticleEngine/",
+  "authors": [
+    "Luke Moody"
+  ],
+  "ignore": [
+    "examples",
+    "src"
+  ],
+  "description": "",
+  "main": "build/ShaderParticles.min.js",
+  "moduleType": [],
+  "license": "MIT",
+  "_release": "0.8.5",
+  "_resolution": {
+    "type": "version",
+    "tag": "0.8.5",
+    "commit": "be02b76eafa5afb111eea17c23aad71cf87a8bb1"
+  },
+  "_source": "git://github.com/giuliandrimba/ShaderParticleEngine.git",
+  "_target": "~0.8.5",
+  "_originalSource": "ShaderParticleEngine",
+  "_direct": true
+}
